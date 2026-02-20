@@ -4,7 +4,58 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
+  build:
     runs-on: ubuntu-latest
+
     steps:
-      - run: echo "workflow ok"
+      - name: Install base tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ca-certificates curl wget jq zstd
+          if ! command -v sha256 >/dev/null 2>&1; then
+            printf '#!/usr/bin/env bash\nsha256sum "$@"\n' | sudo tee /usr/local/bin/sha256 >/dev/null
+            sudo chmod +x /usr/local/bin/sha256
+          fi
+
+      - name: Download ImageBuilder
+        run: |
+          set -euo pipefail
+          VER=24.10.5
+          TARGET=x86
+          SUB=64
+          IB=openwrt-imagebuilder-${VER}-${TARGET}-${SUB}.Linux-x86_64
+          URL=https://downloads.openwrt.org/releases/${VER}/targets/${TARGET}/${SUB}/${IB}.tar.zst
+          echo "IB=$IB" >> "$GITHUB_ENV"
+          curl -fL --retry 5 --retry-delay 3 -o ib.tar.zst "$URL"
+          tar --zstd -xf ib.tar.zst
+
+      - name: Download OpenClash ipk
+        run: |
+          set -euo pipefail
+          API=https://api.github.com/repos/vernesong/OpenClash/releases
+          OC_URL=$(curl -fsSL "$API" | jq -r '[.[].assets[]? | select(.name|test("^luci-app-openclash_.*_all\\.ipk$"))][0].browser_download_url')
+          test -n "$OC_URL"
+          test "$OC_URL" != "null"
+          curl -fL --retry 5 --retry-delay 3 -o luci-app-openclash.ipk "$OC_URL"
+          test -s luci-app-openclash.ipk
+
+      - name: Build firmware
+        run: |
+          set -euo pipefail
+          cd "$IB"
+          cp ../luci-app-openclash.ipk packages/
+          ./scripts/ipkg-make-index.sh packages > packages/Packages
+          gzip -f9n packages/Packages
+
+          PACKAGES="luci luci-base luci-ssl luci-app-firewall luci-app-package-manager luci-theme-bootstrap luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-i18n-package-manager-zh-cn luci-compat ppp ppp-mod-pppoe luci-proto-ppp luci-proto-ipv6 odhcp6c odhcpd-ipv6only dnsmasq-full -dnsmasq bash curl ca-bundle ip-full ipset jq unzip iptables-nft iptables-mod-tproxy iptables-mod-extra kmod-tun kmod-inet-diag kmod-nft-tproxy ruby ruby-yaml kmod-wireguard wireguard-tools luci-app-wireguard luci-i18n-wireguard-zh-cn ddns-scripts ddns-scripts-services ddns-scripts-cloudflare luci-app-ddns luci-i18n-ddns-zh-cn luci-app-openclash"
+
+          make image PROFILE="generic" PACKAGES="$PACKAGES"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-x86-64-24.10.5
+          path: |
+            ${{ env.IB }}/bin/targets/x86/64/*combined*.img.gz
+            ${{ env.IB }}/bin/targets/x86/64/sha256sums
