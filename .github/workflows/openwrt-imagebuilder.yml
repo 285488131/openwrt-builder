@@ -1,67 +1,135 @@
-name: build-openwrt-x86_64
+cd ~/openwrt/openwrt
 
-on:
-  workflow_dispatch:
+git fetch --tags --force
+git checkout -f v24.10.5
 
-jobs:
-  build:
-    runs-on: ubuntu-22.04
+./scripts/feeds clean
+./scripts/feeds update -a
+./scripts/feeds install -a
 
-    steps:
-      - name: Install tools
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y ca-certificates curl wget jq zstd
-          sudo ln -sf /usr/bin/sha256sum /usr/local/bin/sha256
+rm -rf package/luci-app-openclash /tmp/OpenClash
+git clone --depth 1 https://github.com/vernesong/OpenClash.git /tmp/OpenClash
+echo "OpenClash commit: $(git -C /tmp/OpenClash rev-parse HEAD)"
+cp -a /tmp/OpenClash/luci-app-openclash package/
+rm -rf /tmp/OpenClash
 
-      - name: Download ImageBuilder
-        run: |
-          set -euo pipefail
-          VER=24.10.5
-          IB_TMP=openwrt-imagebuilder-${VER}-x86-64.Linux-x86_64
-          URL=https://downloads.openwrt.org/releases/${VER}/targets/x86/64/${IB_TMP}.tar.zst
-          echo "IB_DIR=${IB_TMP}" >> "$GITHUB_ENV"
-          curl -fL --retry 5 --retry-delay 3 -o ib.tar.zst "$URL"
-          tar --zstd -xf ib.tar.zst
+cat > .config <<'EOF'
+CONFIG_TARGET_x86=y
+CONFIG_TARGET_x86_64=y
+CONFIG_TARGET_x86_64_DEVICE_generic=y
 
-      - name: Download OpenClash ipk
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          API="https://api.github.com/repos/vernesong/OpenClash/releases?per_page=20"
-          OC_URL="$(curl -fsSL \
-            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "$API" \
-            | jq -r 'first(.[].assets[]? | select(.name|test("^luci-app-openclash_.*_all\\.ipk$")) | .browser_download_url)')"
-          test -n "$OC_URL"
-          test "$OC_URL" != "null"
-          curl -fL --retry 5 --retry-delay 3 -o luci-app-openclash.ipk "$OC_URL"
+CONFIG_PACKAGE_luci=y
+CONFIG_PACKAGE_luci-base=y
+CONFIG_PACKAGE_luci-ssl=y
+CONFIG_PACKAGE_luci-app-uhttpd=y
+CONFIG_PACKAGE_luci-app-firewall=y
+CONFIG_PACKAGE_luci-app-package-manager=y
+CONFIG_PACKAGE_luci-theme-bootstrap=y
+CONFIG_PACKAGE_luci-compat=y
+CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
+CONFIG_PACKAGE_luci-i18n-firewall-zh-cn=y
+CONFIG_PACKAGE_luci-i18n-package-manager-zh-cn=y
+CONFIG_PACKAGE_luci-i18n-uhttpd-zh-cn=y
 
-      - name: Build firmware
-        run: |
-          set -euo pipefail
-          cd "$IB_DIR"
+CONFIG_PACKAGE_ppp=y
+CONFIG_PACKAGE_ppp-mod-pppoe=y
+CONFIG_PACKAGE_luci-proto-ppp=y
+CONFIG_PACKAGE_luci-proto-ipv6=y
+CONFIG_PACKAGE_odhcp6c=y
+CONFIG_PACKAGE_odhcpd-ipv6only=y
+CONFIG_PACKAGE_dnsmasq-full=y
+# CONFIG_PACKAGE_dnsmasq is not set
 
-          PKGS="luci luci-base luci-ssl luci-app-uhttpd luci-app-firewall luci-app-package-manager luci-theme-bootstrap luci-compat luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-i18n-package-manager-zh-cn luci-i18n-uhttpd-zh-cn ppp ppp-mod-pppoe luci-proto-ppp luci-proto-ipv6 odhcp6c odhcpd-ipv6only dnsmasq-full -dnsmasq coreutils-nohup bash curl ca-bundle ca-certificates ip-full ipset iptables iptables-nft iptables-mod-tproxy iptables-mod-extra libcap libcap-bin ruby ruby-yaml jq unzip kmod-tun kmod-inet-diag kmod-nft-tproxy kmod-wireguard wireguard-tools luci-proto-wireguard ddns-scripts ddns-scripts-services ddns-scripts-cloudflare luci-app-ddns luci-i18n-ddns-zh-cn"
+CONFIG_PACKAGE_luci-app-openclash=y
+CONFIG_PACKAGE_bash=y
+CONFIG_PACKAGE_curl=y
+CONFIG_PACKAGE_ca-bundle=y
+CONFIG_PACKAGE_ip-full=y
+CONFIG_PACKAGE_ipset=y
+CONFIG_PACKAGE_iptables=y
+CONFIG_PACKAGE_iptables-nft=y
+CONFIG_PACKAGE_iptables-mod-tproxy=y
+CONFIG_PACKAGE_iptables-mod-extra=y
+CONFIG_PACKAGE_kmod-tun=y
+CONFIG_PACKAGE_kmod-inet-diag=y
+CONFIG_PACKAGE_kmod-nft-tproxy=y
+CONFIG_PACKAGE_ruby=y
+CONFIG_PACKAGE_ruby-yaml=y
+CONFIG_PACKAGE_jq=y
+CONFIG_PACKAGE_unzip=y
+CONFIG_PACKAGE_coreutils-nohup=y
+CONFIG_PACKAGE_libcap=y
+CONFIG_PACKAGE_libcap-bin=y
 
-          make image PROFILE=generic ROOTFS_PARTSIZE=2048 \
-            PACKAGES="$PKGS ../luci-app-openclash.ipk" V=s 2>&1 | tee /tmp/build.log
+CONFIG_PACKAGE_kmod-wireguard=y
+CONFIG_PACKAGE_wireguard-tools=y
+CONFIG_PACKAGE_luci-proto-wireguard=y
+CONFIG_PACKAGE_qrencode=y
 
-      - name: Upload log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: /tmp/build.log
+CONFIG_PACKAGE_ddns-scripts=y
+CONFIG_PACKAGE_ddns-scripts-services=y
+CONFIG_PACKAGE_ddns-scripts-cloudflare=y
+CONFIG_PACKAGE_luci-app-ddns=y
+CONFIG_PACKAGE_luci-i18n-ddns-zh-cn=y
 
-      - name: Upload firmware
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: openwrt-x86-64-24.10.5
-          path: |
-            ${{ env.IB_DIR }}/bin/targets/x86/64/*combined*.img.gz
-            ${{ env.IB_DIR }}/bin/targets/x86/64/sha256sums
+CONFIG_PACKAGE_speedtest-go=y
+CONFIG_PACKAGE_speedtest-netperf=y
+CONFIG_PACKAGE_netperf=y
+CONFIG_PACKAGE_fping=y
+CONFIG_PACKAGE_mtr-json=y
+CONFIG_PACKAGE_iperf3=y
+
+CONFIG_PACKAGE_collectd=y
+CONFIG_PACKAGE_luci-app-statistics=y
+CONFIG_PACKAGE_collectd-mod-ping=y
+CONFIG_PACKAGE_collectd-mod-curl=y
+CONFIG_PACKAGE_luci-i18n-statistics-zh-cn=y
+CONFIG_PACKAGE_luci-app-nlbwmon=y
+CONFIG_PACKAGE_luci-i18n-nlbwmon-zh-cn=y
+CONFIG_PACKAGE_luci-app-vnstat2=y
+CONFIG_PACKAGE_vnstat2=y
+CONFIG_PACKAGE_vnstati2=y
+CONFIG_PACKAGE_luci-i18n-vnstat2-zh-cn=y
+
+# CONFIG_PACKAGE_iptables-zz-legacy is not set
+# CONFIG_PACKAGE_ip6tables-zz-legacy is not set
+
+# CONFIG_PACKAGE_nginx-ssl is not set
+# CONFIG_PACKAGE_nginx-mod-stream is not set
+# CONFIG_PACKAGE_acme is not set
+# CONFIG_PACKAGE_acme-acmesh-dnsapi is not set
+# CONFIG_PACKAGE_luci-app-acme is not set
+# CONFIG_PACKAGE_luci-i18n-acme-zh-cn is not set
+EOF
+
+make defconfig
+
+for p in \
+luci luci-base luci-ssl luci-app-uhttpd luci-app-firewall luci-app-package-manager \
+luci-theme-bootstrap luci-compat dnsmasq-full ppp-mod-pppoe \
+luci-app-openclash kmod-wireguard wireguard-tools luci-proto-wireguard \
+ddns-scripts-cloudflare luci-app-ddns \
+speedtest-go speedtest-netperf netperf fping mtr-json iperf3 \
+luci-app-statistics luci-app-nlbwmon luci-app-vnstat2 vnstat2 vnstati2
+do
+  grep -q "^CONFIG_PACKAGE_${p}=y" .config || { echo "MISSING in .config: $p"; exit 1; }
+done
+echo "CONFIG CHECK: PASS"
+
+make download -j"$(nproc)" || make download -j1 V=s
+make -j"$(nproc)" || make -j1 V=s
+
+MANIFEST="$(ls bin/targets/x86/64/*manifest | head -n1)"
+for p in \
+luci luci-base luci-ssl luci-app-uhttpd luci-app-firewall luci-app-package-manager \
+luci-theme-bootstrap luci-compat dnsmasq-full ppp-mod-pppoe \
+luci-app-openclash kmod-wireguard wireguard-tools luci-proto-wireguard \
+ddns-scripts-cloudflare luci-app-ddns \
+speedtest-go speedtest-netperf netperf fping mtr-json iperf3 \
+luci-app-statistics luci-app-nlbwmon luci-app-vnstat2 vnstat2 vnstati2
+do
+  grep -q "^${p} " "$MANIFEST" || { echo "MISSING in manifest: $p"; exit 1; }
+done
+echo "MANIFEST CHECK: PASS"
+
+ls -lh bin/targets/x86/64/*combined*.img.gz
