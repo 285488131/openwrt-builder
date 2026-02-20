@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Prepare tools
+      - name: Install tools
         run: |
           set -euxo pipefail
           sudo apt-get update
@@ -40,10 +40,14 @@ jobs:
           set -euxo pipefail
           cd "$IB"
           cp ../luci-app-openclash.ipk packages/
-          ./scripts/ipkg-make-index.sh packages > packages/Packages
-          gzip -f9n packages/Packages
 
-          PKGS="luci luci-ssl luci-theme-bootstrap luci-i18n-base-zh-cn ppp ppp-mod-pppoe luci-proto-ppp luci-proto-ipv6 odhcp6c odhcpd-ipv6only dnsmasq-full -dnsmasq luci-compat bash curl ca-bundle ip-full ipset jq unzip iptables-nft iptables-mod-tproxy iptables-mod-extra kmod-tun kmod-inet-diag kmod-nft-tproxy ruby ruby-yaml kmod-wireguard wireguard-tools luci-app-wireguard ddns-scripts ddns-scripts-cloudflare luci-app-ddns luci-app-openclash"
+          PKGS="luci luci-ssl luci-theme-bootstrap luci-i18n-base-zh-cn luci-compat \
+          ppp ppp-mod-pppoe luci-proto-ppp luci-proto-ipv6 odhcp6c odhcpd-ipv6only dnsmasq-full -dnsmasq \
+          bash curl ca-bundle ip-full ipset jq unzip iptables-nft iptables-mod-tproxy iptables-mod-extra \
+          kmod-tun kmod-inet-diag kmod-nft-tproxy ruby ruby-yaml \
+          kmod-wireguard wireguard-tools luci-app-wireguard luci-i18n-wireguard-zh-cn \
+          ddns-scripts ddns-scripts-services ddns-scripts-cloudflare luci-app-ddns luci-i18n-ddns-zh-cn \
+          luci-app-openclash"
 
           make image PROFILE=generic PACKAGES="$PKGS" 2>&1 | tee /tmp/build.log
 
