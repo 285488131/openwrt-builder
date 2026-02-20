@@ -5,19 +5,19 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Install tools
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y ca-certificates curl wget jq zstd
+          sudo apt-get install -y ca-certificates curl wget jq zstd xz-utils
           sudo ln -sf /usr/bin/sha256sum /usr/local/bin/sha256
 
       - name: Download ImageBuilder
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           VER=24.10.5
           IB=openwrt-imagebuilder-${VER}-x86-64.Linux-x86_64
           URL=https://downloads.openwrt.org/releases/${VER}/targets/x86/64/${IB}.tar.zst
@@ -27,7 +27,7 @@ jobs:
 
       - name: Download OpenClash ipk
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           OC_URL="$(curl -fsSL https://api.github.com/repos/vernesong/OpenClash/releases \
             | jq -r 'first(.[].assets[]? | select(.name|test("^luci-app-openclash_.*_all\\.ipk$")) | .browser_download_url)')"
           test -n "$OC_URL"
@@ -35,21 +35,35 @@ jobs:
           curl -fL --retry 5 --retry-delay 3 -o luci-app-openclash.ipk "$OC_URL"
           test -s luci-app-openclash.ipk
 
-      - name: Build firmware
+      - name: Build firmware (full plugin set)
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           cd "$IB"
+
           cp ../luci-app-openclash.ipk packages/
+          ./scripts/ipkg-make-index.sh packages > packages/Packages
+          gzip -f9n packages/Packages
 
-          PKGS="luci luci-ssl luci-theme-bootstrap luci-i18n-base-zh-cn luci-compat \
+          PKGS="\
+          luci luci-base luci-ssl luci-app-uhttpd luci-app-firewall luci-app-package-manager \
+          luci-theme-bootstrap luci-compat \
+          luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-i18n-package-manager-zh-cn luci-i18n-uhttpd-zh-cn \
           ppp ppp-mod-pppoe luci-proto-ppp luci-proto-ipv6 odhcp6c odhcpd-ipv6only dnsmasq-full -dnsmasq \
-          bash curl ca-bundle ip-full ipset jq unzip iptables-nft iptables-mod-tproxy iptables-mod-extra \
-          kmod-tun kmod-inet-diag kmod-nft-tproxy ruby ruby-yaml \
+          luci-app-openclash \
+          bash curl ca-bundle ca-certificates ip-full ipset iptables iptables-nft iptables-mod-tproxy iptables-mod-extra \
+          kmod-ipt-nat ip6tables-mod-nat coreutils-nohup libcap libcap-bin \
+          kmod-tun kmod-inet-diag kmod-nft-tproxy ruby ruby-yaml jq unzip \
           kmod-wireguard wireguard-tools luci-app-wireguard luci-i18n-wireguard-zh-cn \
-          ddns-scripts ddns-scripts-services ddns-scripts-cloudflare luci-app-ddns luci-i18n-ddns-zh-cn \
-          luci-app-openclash"
+          ddns-scripts ddns-scripts-services ddns-scripts-cloudflare luci-app-ddns luci-i18n-ddns-zh-cn"
 
-          make image PROFILE=generic PACKAGES="$PKGS" 2>&1 | tee /tmp/build.log
+          # 关键：跳过构建期 postinst，避免 package_install 255
+          IPKG_NO_SCRIPT=1 make image PROFILE=generic ROOTFS_PARTSIZE=1536 PACKAGES="$PKGS" V=s 2>&1 | tee /tmp/build.log
+
+      - name: Show key errors (if failed)
+        if: failure()
+        run: |
+          tail -n 200 /tmp/build.log || true
+          grep -nE "Collected errors|Cannot satisfy|Unknown package|No space left|postinst|ERROR|failed" /tmp/build.log | tail -n 200 || true
 
       - name: Upload build log
         if: always()
