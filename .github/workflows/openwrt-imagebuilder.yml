@@ -8,45 +8,83 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Install tools
+      - name: Install base tools
+        shell: bash
         run: |
-          set -eux
+          set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y zstd jq curl wget make opkg-utils
+          sudo apt-get install -y --no-install-recommends ca-certificates curl wget jq zstd make xz-utils
+          if ! command -v sha256 >/dev/null 2>&1; then
+            cat <<'EOF' | sudo tee /usr/local/bin/sha256 >/dev/null
+#!/usr/bin/env bash
+sha256sum "$@"
+EOF
+            sudo chmod +x /usr/local/bin/sha256
+          fi
+          command -v sha256
+          command -v make
+          command -v jq
+          command -v zstd
 
       - name: Download ImageBuilder
+        shell: bash
         run: |
-          set -eux
+          set -euo pipefail
           OWRT_VER="24.10.5"
           TARGET="x86"
           SUBTARGET="64"
           IB_NAME="openwrt-imagebuilder-${OWRT_VER}-${TARGET}-${SUBTARGET}.Linux-x86_64"
           IB_URL="https://downloads.openwrt.org/releases/${OWRT_VER}/targets/${TARGET}/${SUBTARGET}/${IB_NAME}.tar.zst"
 
-          echo "IB_NAME=$IB_NAME" >> "$GITHUB_ENV"
-          wget -O ib.tar.zst "$IB_URL"
+          echo "IB_NAME=${IB_NAME}" >> "$GITHUB_ENV"
+          curl -fL --retry 5 --retry-delay 3 -o ib.tar.zst "$IB_URL"
           tar --zstd -xf ib.tar.zst
 
       - name: Download OpenClash ipk
+        shell: bash
         run: |
-          set -eux
-          OC_URL="$(curl -fsSL https://api.github.com/repos/vernesong/OpenClash/releases \
-            | jq -r '[.[].assets[] | select(.name|test("^luci-app-openclash_.*_all\\.ipk$")) | .browser_download_url][0]')"
+          set -euo pipefail
+          API="https://api.github.com/repos/vernesong/OpenClash/releases"
+          OC_URL="$(curl -fsSL "$API" | jq -r '[.[].assets[]? | select(.name|test("^luci-app-openclash_.*_all\\.ipk$"))][0].browser_download_url')"
 
           test -n "$OC_URL"
           test "$OC_URL" != "null"
-          wget -O luci-app-openclash.ipk "$OC_URL"
+
+          curl -fL --retry 5 --retry-delay 3 -o luci-app-openclash.ipk "$OC_URL"
+          test -s luci-app-openclash.ipk
+
+      - name: Preflight self-check
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "$IB_NAME"
+          test -x "$IB_NAME/scripts/ipkg-make-index.sh"
+          test -d "$IB_NAME/packages"
+          test -s luci-app-openclash.ipk
+          echo "Preflight OK"
 
       - name: Build firmware
+        shell: bash
         run: |
-          set -eux
+          set -euo pipefail
           cd "$IB_NAME"
 
           cp ../luci-app-openclash.ipk packages/
-          opkg-make-index packages > packages/Packages
+          ./scripts/ipkg-make-index.sh packages > packages/Packages
           gzip -f9n packages/Packages
 
-          PACKAGES="luci luci-base luci-ssl luci-theme-bootstrap luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-compat ppp ppp-mod-pppoe luci-proto-ppp luci-proto-ipv6 odhcp6c odhcpd-ipv6only dnsmasq-full -dnsmasq bash curl ca-bundle ip-full ipset jq unzip iptables-nft iptables-mod-tproxy iptables-mod-extra kmod-tun kmod-inet-diag kmod-nft-tproxy ruby ruby-yaml kmod-wireguard wireguard-tools luci-app-wireguard luci-i18n-wireguard-zh-cn ddns-scripts ddns-scripts-services ddns-scripts-cloudflare luci-app-ddns luci-i18n-ddns-zh-cn luci-app-openclash"
+          PACKAGES="
+          luci luci-base luci-ssl luci-theme-bootstrap
+          luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn
+          ppp ppp-mod-pppoe luci-proto-ppp luci-proto-ipv6
+          odhcp6c odhcpd-ipv6only dnsmasq-full -dnsmasq
+          luci-compat bash curl ca-bundle ip-full ipset
+          kmod-tun kmod-inet-diag kmod-nft-tproxy ruby ruby-yaml unzip
+          kmod-wireguard wireguard-tools luci-app-wireguard luci-i18n-wireguard-zh-cn
+          ddns-scripts ddns-scripts-services ddns-scripts-cloudflare luci-app-ddns luci-i18n-ddns-zh-cn
+          luci-app-openclash
+          "
+          PACKAGES="$(echo "$PACKAGES" | xargs)"
 
           make image PROFILE="generic" PACKAGES="$PACKAGES"
 
