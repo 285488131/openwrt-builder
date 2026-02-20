@@ -10,11 +10,13 @@ jobs:
     steps:
       - name: Install tools
         run: |
+          set -eux
           sudo apt-get update
-          sudo apt-get install -y zstd jq curl wget
+          sudo apt-get install -y zstd jq curl wget make opkg-utils
 
       - name: Download ImageBuilder
         run: |
+          set -eux
           OWRT_VER="24.10.5"
           TARGET="x86"
           SUBTARGET="64"
@@ -22,27 +24,26 @@ jobs:
           IB_URL="https://downloads.openwrt.org/releases/${OWRT_VER}/targets/${TARGET}/${SUBTARGET}/${IB_NAME}.tar.zst"
 
           echo "IB_NAME=$IB_NAME" >> "$GITHUB_ENV"
-          wget -qO ib.tar.zst "$IB_URL"
+          wget -O ib.tar.zst "$IB_URL"
           tar --zstd -xf ib.tar.zst
 
       - name: Download OpenClash ipk
         run: |
+          set -eux
           OC_URL="$(curl -fsSL https://api.github.com/repos/vernesong/OpenClash/releases \
             | jq -r '[.[].assets[] | select(.name|test("^luci-app-openclash_.*_all\\.ipk$")) | .browser_download_url][0]')"
 
-          if [ -z "$OC_URL" ] || [ "$OC_URL" = "null" ]; then
-            echo "OpenClash ipk not found." >&2
-            exit 1
-          fi
-
-          wget -qO luci-app-openclash.ipk "$OC_URL"
+          test -n "$OC_URL"
+          test "$OC_URL" != "null"
+          wget -O luci-app-openclash.ipk "$OC_URL"
 
       - name: Build firmware
         run: |
+          set -eux
           cd "$IB_NAME"
 
           cp ../luci-app-openclash.ipk packages/
-          ./scripts/ipkg-make-index.sh packages > packages/Packages
+          opkg-make-index packages > packages/Packages
           gzip -f9n packages/Packages
 
           PACKAGES="luci luci-base luci-ssl luci-theme-bootstrap luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-compat ppp ppp-mod-pppoe luci-proto-ppp luci-proto-ipv6 odhcp6c odhcpd-ipv6only dnsmasq-full -dnsmasq bash curl ca-bundle ip-full ipset jq unzip iptables-nft iptables-mod-tproxy iptables-mod-extra kmod-tun kmod-inet-diag kmod-nft-tproxy ruby ruby-yaml kmod-wireguard wireguard-tools luci-app-wireguard luci-i18n-wireguard-zh-cn ddns-scripts ddns-scripts-services ddns-scripts-cloudflare luci-app-ddns luci-i18n-ddns-zh-cn luci-app-openclash"
