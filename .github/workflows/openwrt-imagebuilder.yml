@@ -3,9 +3,6 @@ name: build-openwrt-x86_64
 on:
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -18,13 +15,13 @@ jobs:
           sudo apt-get install -y ca-certificates curl wget jq zstd
           sudo ln -sf /usr/bin/sha256sum /usr/local/bin/sha256
 
-      - name: Download ImageBuilder (official 24.10.5)
+      - name: Download ImageBuilder
         run: |
           set -euo pipefail
           VER=24.10.5
-          IB=openwrt-imagebuilder-${VER}-x86-64.Linux-x86_64
-          URL=https://downloads.openwrt.org/releases/${VER}/targets/x86/64/${IB}.tar.zst
-          echo "IB=$IB" >> "$GITHUB_ENV"
+          IB_TMP=openwrt-imagebuilder-${VER}-x86-64.Linux-x86_64
+          URL=https://downloads.openwrt.org/releases/${VER}/targets/x86/64/${IB_TMP}.tar.zst
+          echo "IB_DIR=${IB_TMP}" >> "$GITHUB_ENV"
           curl -fL --retry 5 --retry-delay 3 -o ib.tar.zst "$URL"
           tar --zstd -xf ib.tar.zst
 
@@ -42,37 +39,23 @@ jobs:
           test -n "$OC_URL"
           test "$OC_URL" != "null"
           curl -fL --retry 5 --retry-delay 3 -o luci-app-openclash.ipk "$OC_URL"
-          test -s luci-app-openclash.ipk
 
-      - name: Build firmware (OpenClash built-in)
+      - name: Build firmware
         run: |
           set -euo pipefail
-          cd "$IB"
+          cd "$IB_DIR"
 
-          PKGS="\
-          luci luci-base luci-ssl luci-app-uhttpd luci-app-firewall luci-app-package-manager \
-          luci-theme-bootstrap luci-compat \
-          luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-i18n-package-manager-zh-cn luci-i18n-uhttpd-zh-cn \
-          ppp ppp-mod-pppoe luci-proto-ppp luci-proto-ipv6 odhcp6c odhcpd-ipv6only dnsmasq-full -dnsmasq \
-          coreutils-nohup bash curl ca-bundle ca-certificates ip-full ipset \
-          iptables iptables-nft iptables-mod-tproxy iptables-mod-extra \
-          libcap libcap-bin ruby ruby-yaml jq unzip \
-          kmod-tun kmod-inet-diag kmod-nft-tproxy \
-          kmod-wireguard wireguard-tools luci-proto-wireguard \
-          ddns-scripts ddns-scripts-services ddns-scripts-cloudflare luci-app-ddns luci-i18n-ddns-zh-cn \
-          "
+          PKGS="luci luci-base luci-ssl luci-app-uhttpd luci-app-firewall luci-app-package-manager luci-theme-bootstrap luci-compat luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-i18n-package-manager-zh-cn luci-i18n-uhttpd-zh-cn ppp ppp-mod-pppoe luci-proto-ppp luci-proto-ipv6 odhcp6c odhcpd-ipv6only dnsmasq-full -dnsmasq coreutils-nohup bash curl ca-bundle ca-certificates ip-full ipset iptables iptables-nft iptables-mod-tproxy iptables-mod-extra libcap libcap-bin ruby ruby-yaml jq unzip kmod-tun kmod-inet-diag kmod-nft-tproxy kmod-wireguard wireguard-tools luci-proto-wireguard ddns-scripts ddns-scripts-services ddns-scripts-cloudflare luci-app-ddns luci-i18n-ddns-zh-cn"
 
-          # 关键：直接安装本地 ipk，不放入 packages/，避免触发索引脚本报错
           make image PROFILE=generic ROOTFS_PARTSIZE=2048 \
             PACKAGES="$PKGS ../luci-app-openclash.ipk" V=s 2>&1 | tee /tmp/build.log
 
-      - name: Upload build log
+      - name: Upload log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-log
           path: /tmp/build.log
-          if-no-files-found: ignore
 
       - name: Upload firmware
         if: success()
@@ -80,5 +63,5 @@ jobs:
         with:
           name: openwrt-x86-64-24.10.5
           path: |
-            ${{ env.IB }}/bin/targets/x86/64/*combined*.img.gz
-            ${{ env.IB }}/bin/targets/x86/64/sha256sums
+            ${{ env.IB_DIR }}/bin/targets/x86/64/*combined*.img.gz
+            ${{ env.IB_DIR }}/bin/targets/x86/64/sha256sums
